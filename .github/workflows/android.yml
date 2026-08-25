@@ -1,0 +1,95 @@
+name: Android
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - '*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build YingScreen
+    runs-on: ubuntu-latest
+    env:
+      RECEIVER_RELEASE_KEYSTORE_BASE64: ${{ secrets.RECEIVER_RELEASE_KEYSTORE_BASE64 }}
+      RECEIVER_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RECEIVER_RELEASE_KEYSTORE_PASSWORD }}
+      RECEIVER_RELEASE_KEY_ALIAS: ${{ secrets.RECEIVER_RELEASE_KEY_ALIAS }}
+      RECEIVER_RELEASE_KEY_PASSWORD: ${{ secrets.RECEIVER_RELEASE_KEY_PASSWORD }}
+      RECEIVER_RELEASE_KEYSTORE_TYPE: ${{ secrets.RECEIVER_RELEASE_KEYSTORE_TYPE }}
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Set up Android SDK paths
+        run: |
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses >/dev/null
+
+      - name: Install Android native toolchain
+        run: |
+          sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "cmake;3.22.1" \
+            "ndk;25.1.8937393"
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Configure release signing
+        if: env.RECEIVER_RELEASE_KEYSTORE_BASE64 != ''
+        run: |
+          mkdir -p app/keystore
+          echo "$RECEIVER_RELEASE_KEYSTORE_BASE64" | base64 --decode > app/keystore/receiver-release.p12
+          {
+            echo "storeFile=keystore/receiver-release.p12"
+            echo "storePassword=$RECEIVER_RELEASE_KEYSTORE_PASSWORD"
+            echo "keyAlias=$RECEIVER_RELEASE_KEY_ALIAS"
+            echo "keyPassword=$RECEIVER_RELEASE_KEY_PASSWORD"
+            echo "storeType=${RECEIVER_RELEASE_KEYSTORE_TYPE:-pkcs12}"
+          } > signing.properties
+
+      - name: Build release APK
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Package APK artifact
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/YingScreen-release.apk
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: YingScreen-release-apk
+          path: dist/YingScreen-release.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          name: YingScreen ${{ github.ref_name }}
+          files: dist/YingScreen-release.apk
+          generate_release_notes: true
