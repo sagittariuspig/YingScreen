@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Replace onboarding Material buttons with simple TV-focused surfaces so labels render on the Zidoo X9S Android 6 graphics stack.
+
 ## 0.1.1
 
 - Lower the minimum Android version to Android 6.0 (API 23) for Zidoo X9S compatibility.

@@ -22,8 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.Button
-import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Surface
@@ -351,23 +349,28 @@ private fun NavigationRow(
 @Composable
 private fun FocusButton(text: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    Button(
-        onClick = onClick,
-        colors = ButtonDefaults.buttonColors(
-            backgroundColor = if (focused) Color(0xFF6A7280) else Color(0xFF4F545B),
-            contentColor = Color.White
+    Surface(
+        color = if (focused) Color(0xFF6A7280) else Color(0xFF4F545B),
+        shape = RoundedCornerShape(5.dp),
+        border = BorderStroke(
+            width = if (focused) 3.dp else 1.dp,
+            color = if (focused) Accent else Color(0x44FFFFFF)
         ),
         modifier = Modifier
             .width(178.dp)
             .height(56.dp)
             .onFocusChanged { focused = it.isFocused }
-            .border(
-                width = if (focused) 3.dp else 0.dp,
-                color = if (focused) Accent else Color.Transparent,
-                shape = RoundedCornerShape(5.dp)
-            )
+            .focusable()
+            .clickable(onClick = onClick)
     ) {
-        Text(text = text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = text,
+                color = Color.White,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
     }
 }
 
