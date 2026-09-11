@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Lower the minimum Android version to Android 6.0 (API 23) for Zidoo X9S compatibility.
+- Keep both ARM 32-bit and 64-bit native libraries in the universal APK.
+
 ## Unreleased
 
 - Reframed the app as an Android TV / Google TV AirPlay receiver.

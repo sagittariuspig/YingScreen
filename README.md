@@ -10,7 +10,7 @@
 - H.264 视频硬件解码及 AAC/ALAC 音频播放
 - 横竖屏适配、断线恢复和 Android TV 遥控器操作
 - 默认接收器名称“家庭影院”
-- 支持 `arm64-v8a`、`armeabi-v7a`，最低 Android 8.1
+- 支持 `arm64-v8a`、`armeabi-v7a`，最低 Android 6.0（兼容 Zidoo X9S）
 
 腾讯视频或其他 App 对 DRM 内容的限制由内容提供方和 iOS 决定；影屏不绕过内容 DRM。
 

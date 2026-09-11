@@ -36,11 +36,11 @@ android {
 
     defaultConfig {
         applicationId "com.yingscreen.receiver"
-        minSdk 27
+        minSdk 23
         targetSdk 34
         ndkVersion "25.1.8937393"
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 2
+        versionName "0.1.1"
         externalNativeBuild {
             cmake {
                 abiFilters "armeabi-v7a", "arm64-v8a"
