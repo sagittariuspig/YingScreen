@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Avoid `AudioTrack.setBufferSizeInFrames()` because the Zidoo X9S Android 6 firmware omits that API and aborts the process when audio starts.
+
 ## 0.1.2
 
 - Replace onboarding Material buttons with simple TV-focused surfaces so labels render on the Zidoo X9S Android 6 graphics stack.

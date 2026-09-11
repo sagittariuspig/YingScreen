@@ -336,9 +336,10 @@ class AudioPlayer(
             @Suppress("DEPRECATION")
             AudioTrack(AudioManager.STREAM_MUSIC, SAMPLE_RATE, CHANNELS, AUDIO_FORMAT, bufferSize, AudioTrack.MODE_STREAM)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            audioTrack.setBufferSizeInFrames(bufferSize / BYTES_PER_FRAME)
-        }
+        // Some vendor Android 6 builds (including the Zidoo X9S firmware) report
+        // API 23 but omit AudioTrack.setBufferSizeInFrames(). The constructor or
+        // Builder already receives the requested buffer size, so resizing here is
+        // redundant and can crash those devices with NoSuchMethodError.
         audioTrack.setVolume(volume)
         Log.i(
             TAG,
