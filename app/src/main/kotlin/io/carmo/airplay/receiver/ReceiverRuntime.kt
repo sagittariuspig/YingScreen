@@ -49,6 +49,7 @@ class ReceiverRuntime(private val context: Context) {
     private var airPlayServer: AirPlayServer? = null
     private var raopServer: RaopServer? = null
     private var dnsNotify: DNSNotify? = null
+    private var dlnaRenderer: DlnaMediaRenderer? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var mediaSession: MediaSession? = null
     private val hdmiCecWakeController = HdmiCecWakeController(appContext)
@@ -180,6 +181,13 @@ class ReceiverRuntime(private val context: Context) {
         airPlayServer = airplay
         airplay.startServer()
 
+        dlnaRenderer = DlnaMediaRenderer(
+            context = appContext,
+            name = { dnsNotify?.deviceName ?: "家庭影院" },
+            localIp = ::getLocalIpAddress,
+            onPlaybackChanged = ::onDlnaPlaybackChanged
+        ).also { it.start() }
+
         val airplayPort = airplay.port
         val raopPort = raop.port
 
@@ -213,6 +221,8 @@ class ReceiverRuntime(private val context: Context) {
         airPlayServer = null
         raopServer?.stopServer()
         raopServer = null
+        dlnaRenderer?.stop()
+        dlnaRenderer = null
         isSurfaceAttached = false
         releaseMediaSession()
         dismissVideoStartedNotification()
@@ -230,6 +240,7 @@ class ReceiverRuntime(private val context: Context) {
     fun attachSurface(surface: Surface) {
         isSurfaceAttached = true
         raopServer?.attachSurface(surface)
+        dlnaRenderer?.attachSurface(surface)
     }
 
     /**
@@ -239,6 +250,7 @@ class ReceiverRuntime(private val context: Context) {
     fun detachSurface() {
         isSurfaceAttached = false
         raopServer?.detachSurface()
+        dlnaRenderer?.detachSurface()
     }
 
     fun setVideoMode(width: Int, height: Int) {
@@ -375,6 +387,24 @@ class ReceiverRuntime(private val context: Context) {
         acquireMulticastLock()
         if (airplay.port != 0) dns.registerAirplay(airplay.port)
         if (raop.port != 0) dns.registerRaop(raop.port)
+        dlnaRenderer?.refreshAdvertisement()
+    }
+
+    private fun onDlnaPlaybackChanged(active: Boolean, status: String) {
+        mainHandler.post {
+            setStreamStatus(status)
+            if (active) {
+                hdmiCecWakeController.wakeForIncomingConnection()
+                if (!isSurfaceAttached && ReceiverPreferences.automaticVideoTakeover(appContext)) {
+                    bringReceiverToFront()
+                }
+                videoActivityListeners.forEach { it(true) }
+                transitionTo(ReceiverState.VIDEO_ACTIVE, "DLNA playback")
+            } else {
+                videoActivityListeners.forEach { it(false) }
+                transitionTo(ReceiverState.IDLE_ADVERTISING, "DLNA playback ended")
+            }
+        }
     }
 
     private fun onConnectionStarted() {

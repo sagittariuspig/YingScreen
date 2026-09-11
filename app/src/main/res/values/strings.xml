@@ -28,7 +28,7 @@
     <string name="settings_button">Settings</string>
     <string name="quick_settings_button">Quick</string>
     <string name="help_button">Help</string>
-    <string name="connection_hint">打开 iPhone 控制中心，选择“屏幕镜像”，然后选择“家庭影院”。</string>
+    <string name="connection_hint">支持“屏幕镜像”；也可在腾讯视频中点击 TV 投屏并选择“家庭影院”。</string>
     <string name="audio_cover_art">Album art</string>
     <string name="stream_action_stop">Stop</string>
     <string name="stream_action_screen_fit">Screen fit</string>
