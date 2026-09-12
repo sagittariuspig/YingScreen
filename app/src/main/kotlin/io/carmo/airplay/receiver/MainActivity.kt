@@ -65,6 +65,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var audioVolumeOverlay: View
     private lateinit var audioVolumeOverlayLabel: TextView
     private lateinit var audioVolumeOverlayBar: ProgressBar
+    private lateinit var playbackProgressOverlay: View
+    private lateinit var playbackProgressLabel: TextView
+    private lateinit var playbackProgressBar: ProgressBar
     private lateinit var permissionExplanation: View
     private lateinit var permissionButton: Button
     private lateinit var streamOverlay: ComposeView
@@ -224,6 +227,10 @@ class MainActivity : ComponentActivity() {
         audioVolumeOverlay.visibility = View.GONE
     }
 
+    private val hidePlaybackProgressOverlay = Runnable {
+        playbackProgressOverlay.visibility = View.GONE
+    }
+
     private val hideStreamInfoOverlay = Runnable {
         if (::streamOverlay.isInitialized) {
             streamOverlay.visibility = View.GONE
@@ -298,6 +305,9 @@ class MainActivity : ComponentActivity() {
         audioVolumeOverlay = findViewById(R.id.audio_volume_overlay)
         audioVolumeOverlayLabel = findViewById(R.id.audio_volume_overlay_label)
         audioVolumeOverlayBar = findViewById(R.id.audio_volume_overlay_bar)
+        playbackProgressOverlay = findViewById(R.id.playback_progress_overlay)
+        playbackProgressLabel = findViewById(R.id.playback_progress_label)
+        playbackProgressBar = findViewById(R.id.playback_progress_bar)
         permissionExplanation = findViewById(R.id.permission_explanation)
         permissionButton = findViewById(R.id.permission_button)
         streamOverlay = findViewById(R.id.stream_overlay)
@@ -509,23 +519,37 @@ class MainActivity : ComponentActivity() {
     private fun seekDlnaFromRemote(deltaMs: Int): Boolean {
         val handled = runtime?.seekDlnaBy(deltaMs) == true
         if (handled) {
-            Toast.makeText(
-                this,
-                if (deltaMs < 0) {
-                    "快退 ${kotlin.math.abs(deltaMs) / 1000} 秒"
-                } else {
-                    "快进 ${deltaMs / 1000} 秒"
-                },
-                Toast.LENGTH_SHORT
-            ).show()
+            showPlaybackProgress(
+                if (deltaMs < 0) "快退 ${kotlin.math.abs(deltaMs) / 1000} 秒"
+                else "快进 ${deltaMs / 1000} 秒"
+            )
         }
         return handled
     }
 
     private fun toggleDlnaFromRemote(): Boolean {
         val handled = runtime?.toggleDlnaPlayback() == true
-        if (handled) Toast.makeText(this, "播放 / 暂停", Toast.LENGTH_SHORT).show()
+        if (handled) showPlaybackProgress("播放 / 暂停")
         return handled
+    }
+
+    private fun showPlaybackProgress(action: String) {
+        val (position, duration) = runtime?.dlnaPlaybackProgress() ?: return
+        playbackProgressLabel.text = "$action    ${formatPlaybackTime(position)} / ${formatPlaybackTime(duration)}"
+        playbackProgressBar.progress = if (duration > 0) {
+            (position.toLong() * 1000L / duration).toInt().coerceIn(0, 1000)
+        } else 0
+        playbackProgressOverlay.visibility = View.VISIBLE
+        playbackProgressOverlay.removeCallbacks(hidePlaybackProgressOverlay)
+        playbackProgressOverlay.postDelayed(hidePlaybackProgressOverlay, PLAYBACK_PROGRESS_HIDE_MS)
+    }
+
+    private fun formatPlaybackTime(ms: Int): String {
+        val seconds = ms.coerceAtLeast(0) / 1000
+        val hours = seconds / 3600
+        return if (hours > 0) {
+            "%d:%02d:%02d".format(Locale.US, hours, seconds / 60 % 60, seconds % 60)
+        } else "%02d:%02d".format(Locale.US, seconds / 60, seconds % 60)
     }
 
     private fun registerRuntimeListeners(boundRuntime: ReceiverRuntime) {
@@ -602,6 +626,7 @@ class MainActivity : ComponentActivity() {
         versionLabel.elevation = elevation
         audioOnlyOverlay.elevation = elevation
         audioVolumeOverlay.elevation = elevation
+        playbackProgressOverlay.elevation = elevation
         streamOverlay.elevation = elevation
         quickSettingsOverlay.elevation = elevation
         streamInfoOverlay.elevation = elevation
@@ -1728,6 +1753,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val REMOTE_SEEK_MS = 10_000
         private const val REMOTE_LONG_SEEK_MS = 60_000
+        private const val PLAYBACK_PROGRESS_HIDE_MS = 2_000L
         private const val TAG = "Receiver"
         private const val WAKE_LOCK_TAG = "ReceiverActive"
         private const val WAKE_NUDGE_LOCK_TAG = "ReceiverActivity"

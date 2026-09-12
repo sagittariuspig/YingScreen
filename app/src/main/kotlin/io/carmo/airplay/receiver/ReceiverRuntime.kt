@@ -105,6 +105,7 @@ class ReceiverRuntime(private val context: Context) {
     fun toggleDlnaPlayback(): Boolean = dlnaRenderer?.togglePlayback() == true
     fun seekDlnaBy(deltaMs: Int): Boolean = dlnaRenderer?.seekBy(deltaMs) == true
     fun stopDlnaPlayback(): Boolean = dlnaRenderer?.stopFromRemote() == true
+    fun dlnaPlaybackProgress(): Pair<Int, Int>? = dlnaRenderer?.playbackProgress()
 
     fun addStateListener(listener: (ReceiverState) -> Unit) {
         stateListeners.add(listener)

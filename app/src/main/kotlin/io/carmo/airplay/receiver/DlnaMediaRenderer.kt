@@ -110,6 +110,13 @@ class DlnaMediaRenderer(
         return true
     }
 
+    fun playbackProgress(): Pair<Int, Int>? {
+        val current = player ?: return null
+        return try {
+            current.currentPosition.coerceAtLeast(0) to current.duration.coerceAtLeast(0)
+        } catch (_: Exception) { null }
+    }
+
     private fun runHttpServer() {
         try {
             // Prefer a stable LOCATION because Tencent Video caches it. Some TV
