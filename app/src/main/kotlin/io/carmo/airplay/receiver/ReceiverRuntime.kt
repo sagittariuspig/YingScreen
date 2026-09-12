@@ -185,7 +185,7 @@ class ReceiverRuntime(private val context: Context) {
 
         dlnaRenderer = DlnaMediaRenderer(
             context = appContext,
-            name = { dnsNotify?.deviceName ?: "家庭影院" },
+            name = { "${dnsNotify?.deviceName ?: "家庭影院"}-影屏" },
             localIp = ::getLocalIpAddress,
             onPlaybackChanged = ::onDlnaPlaybackChanged
         ).also { it.start() }

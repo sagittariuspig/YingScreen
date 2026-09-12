@@ -29,7 +29,9 @@ class DlnaMediaRenderer(
     private val onPlaybackChanged: (Boolean, String) -> Unit
 ) {
     private val appContext = context.applicationContext
-    private val uuid = UUID.nameUUIDFromBytes(("YingScreen-DLNA-" + ReceiverIdentity.receiverId(appContext)).toByteArray())
+    // v2 identity intentionally invalidates controller caches created by the
+    // early dynamic-port builds (0.2.0-0.2.3).
+    private val uuid = UUID.nameUUIDFromBytes(("YingScreen-DLNA-v2-" + ReceiverIdentity.receiverId(appContext)).toByteArray())
     private val workers = Executors.newCachedThreadPool()
     @Volatile private var running = false
     @Volatile private var httpServer: ServerSocket? = null
@@ -135,7 +137,7 @@ class DlnaMediaRenderer(
         val socket = ssdpSocket ?: return
         targets().filter { requested.equals("ssdp:all", true) || requested.equals(it.first, true) }
             .forEach { (st, usn) ->
-                val body = "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\nLOCATION: ${location()}\r\nSERVER: Android/6.0 UPnP/1.0 YingScreen/${BuildConfig.VERSION_NAME}\r\nST: $st\r\nUSN: $usn\r\nBOOTID.UPNP.ORG: 1\r\nCONFIGID.UPNP.ORG: 1\r\n\r\n"
+                val body = "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\nLOCATION: ${location()}\r\nSERVER: Android/6.0 UPnP/1.0 YingScreen/${BuildConfig.VERSION_NAME}\r\nST: $st\r\nUSN: $usn\r\nBOOTID.UPNP.ORG: ${BuildConfig.VERSION_CODE}\r\nCONFIGID.UPNP.ORG: ${BuildConfig.VERSION_CODE}\r\n\r\n"
                 try { socket.send(DatagramPacket(body.toByteArray(), body.toByteArray().size, address, port)) } catch (_: Exception) {}
             }
     }
@@ -145,7 +147,7 @@ class DlnaMediaRenderer(
         val address = InetAddress.getByName(SSDP_HOST)
         val socket = ssdpSocket ?: MulticastSocket()
         targets().forEach { (nt, usn) ->
-            val body = "NOTIFY * HTTP/1.1\r\nHOST: $SSDP_HOST:$SSDP_PORT\r\nCACHE-CONTROL: max-age=1800\r\nLOCATION: http://${localIp()}:$port/description.xml\r\nNT: $nt\r\nNTS: $nts\r\nSERVER: Android/6.0 UPnP/1.0 YingScreen/${BuildConfig.VERSION_NAME}\r\nUSN: $usn\r\nBOOTID.UPNP.ORG: 1\r\nCONFIGID.UPNP.ORG: 1\r\n\r\n"
+            val body = "NOTIFY * HTTP/1.1\r\nHOST: $SSDP_HOST:$SSDP_PORT\r\nCACHE-CONTROL: max-age=1800\r\nLOCATION: http://${localIp()}:$port/description.xml\r\nNT: $nt\r\nNTS: $nts\r\nSERVER: Android/6.0 UPnP/1.0 YingScreen/${BuildConfig.VERSION_NAME}\r\nUSN: $usn\r\nBOOTID.UPNP.ORG: ${BuildConfig.VERSION_CODE}\r\nCONFIGID.UPNP.ORG: ${BuildConfig.VERSION_CODE}\r\n\r\n"
             try { socket.send(DatagramPacket(body.toByteArray(), body.toByteArray().size, address, SSDP_PORT)) } catch (_: Exception) {}
         }
         if (socket !== ssdpSocket) socket.close()
