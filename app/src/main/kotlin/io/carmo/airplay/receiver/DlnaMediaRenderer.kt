@@ -182,6 +182,7 @@ class DlnaMediaRenderer(
 
     private fun respondToSearch(address: InetAddress, port: Int, requested: String) {
         val socket = ssdpSocket ?: return
+        Log.d(TAG, "M-SEARCH st=$requested from=${address.hostAddress}:$port")
         targets().filter { requested.equals("ssdp:all", true) || requested.equals(it.first, true) }
             .forEach { (st, usn) ->
                 val body = "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\nLOCATION: ${location()}\r\nSERVER: Android/6.0 UPnP/1.0 YingScreen/${BuildConfig.VERSION_NAME}\r\nST: $st\r\nUSN: $usn\r\nBOOTID.UPNP.ORG: ${BuildConfig.VERSION_CODE}\r\nCONFIGID.UPNP.ORG: ${BuildConfig.VERSION_CODE}\r\n\r\n"
@@ -238,6 +239,7 @@ class DlnaMediaRenderer(
                 val parts = requestLine.split(' ')
                 val method = parts.getOrElse(0) { "" }.uppercase(Locale.US)
                 val path = parts.getOrElse(1) { "/" }.substringBefore('?')
+                Log.d(TAG, "HTTP $method $path ua=${headers["user-agent"].orEmpty()}")
                 when {
                     method == "GET" && path == "/description.xml" -> xml(it.getOutputStream(), deviceDescription())
                     method == "GET" && path.endsWith("scpd.xml") -> xml(it.getOutputStream(), scpd(path))
@@ -277,7 +279,6 @@ class DlnaMediaRenderer(
                 "GetVolume" -> "<CurrentVolume>${volumePercent()}</CurrentVolume>"
                 "SetVolume" -> { setVolume(xmlValue(body, "DesiredVolume").toIntOrNull() ?: 100); "" }
                 "GetMute" -> "<CurrentMute>${if (volumePercent() == 0) 1 else 0}</CurrentMute>"
-                "SetMute" -> { setVolume(if (xmlValue(body, "DesiredMute") == "1") 0 else 50); "" }
                 "GetProtocolInfo" -> "<Source></Source><Sink>http-get:*:video/mp4:*,http-get:*:video/mpeg:*,http-get:*:video/x-matroska:*,http-get:*:application/vnd.apple.mpegurl:*,http-get:*:application/x-mpegURL:*,http-get:*:video/vnd.dlna.mpeg-tts:*,http-get:*:audio/mpeg:*</Sink>"
                 "GetCurrentConnectionIDs" -> "<ConnectionIDs>0</ConnectionIDs>"
                 "GetCurrentConnectionInfo" -> "<RcsID>0</RcsID><AVTransportID>0</AVTransportID><ProtocolInfo></ProtocolInfo><PeerConnectionManager></PeerConnectionManager><PeerConnectionID>-1</PeerConnectionID><Direction>Input</Direction><Status>OK</Status>"
@@ -325,9 +326,69 @@ class DlnaMediaRenderer(
     private fun volumePercent(): Int { val a = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager; val max = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC); return if (max == 0) 0 else a.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / max }
     private fun setVolume(percent: Int) { val a = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager; a.setStreamVolume(AudioManager.STREAM_MUSIC, a.getStreamMaxVolume(AudioManager.STREAM_MUSIC) * percent.coerceIn(0, 100) / 100, 0) }
 
-    private fun deviceDescription() = """<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><URLBase>${location().substringBeforeLast('/')}/</URLBase><device><deviceType>$RENDERER_TYPE</deviceType><friendlyName>${name().xmlEscape()}</friendlyName><manufacturer>YingScreen</manufacturer><manufacturerURL>https://github.com/sagittariuspig/YingScreen</manufacturerURL><modelDescription>AirPlay and DLNA receiver for Android TV</modelDescription><modelName>影屏</modelName><modelNumber>${BuildConfig.VERSION_NAME}</modelNumber><serialNumber>${uuid.toString().take(12)}</serialNumber><UDN>uuid:$uuid</UDN><serviceList>${serviceXml(AV_TRANSPORT, "AVTransport", "avtransport")}${serviceXml(RENDERING_CONTROL, "RenderingControl", "renderingcontrol")}${serviceXml(CONNECTION_MANAGER, "ConnectionManager", "connectionmanager")}</serviceList></device></root>"""
+    private fun deviceDescription() = """<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><URLBase>${location().substringBeforeLast('/')}/</URLBase><device><deviceType>$RENDERER_TYPE</deviceType><friendlyName>${name().xmlEscape()}</friendlyName><manufacturer>YingScreen</manufacturer><manufacturerURL>https://github.com/sagittariuspig/YingScreen</manufacturerURL><modelDescription>AirPlay and DLNA receiver for Android TV</modelDescription><modelName>影屏</modelName><modelNumber>${BuildConfig.VERSION_NAME}</modelNumber><serialNumber>${uuid.toString().take(12)}</serialNumber><UDN>uuid:$uuid</UDN><dlna:X_DLNADOC>DMR-1.50</dlna:X_DLNADOC><dlna:X_DLNACAP>av-upload,image-upload,audio-upload</dlna:X_DLNACAP><serviceList>${serviceXml(AV_TRANSPORT, "AVTransport", "avtransport")}${serviceXml(RENDERING_CONTROL, "RenderingControl", "renderingcontrol")}${serviceXml(CONNECTION_MANAGER, "ConnectionManager", "connectionmanager")}</serviceList></device></root>"""
     private fun serviceXml(type: String, id: String, path: String) = "<service><serviceType>$type</serviceType><serviceId>urn:upnp-org:serviceId:$id</serviceId><SCPDURL>/$path-scpd.xml</SCPDURL><controlURL>/control/$path</controlURL><eventSubURL>/event/$path</eventSubURL></service>"
-    private fun scpd(path: String): String { val actions = when { path.contains("rendering") -> listOf("GetVolume", "SetVolume", "GetMute", "SetMute"); path.contains("connection") -> listOf("GetProtocolInfo", "GetCurrentConnectionIDs", "GetCurrentConnectionInfo"); else -> listOf("SetAVTransportURI", "SetNextAVTransportURI", "Play", "Pause", "Stop", "Seek", "GetTransportInfo", "GetPositionInfo", "GetMediaInfo", "GetDeviceCapabilities", "GetTransportSettings", "GetCurrentTransportActions") }; return "<?xml version=\"1.0\"?><scpd xmlns=\"urn:schemas-upnp-org:service-1-0\"><specVersion><major>1</major><minor>0</minor></specVersion><actionList>${actions.joinToString("") { "<action><name>$it</name></action>" }}</actionList><serviceStateTable></serviceStateTable></scpd>" }
+    private fun scpd(path: String): String = when {
+        path.contains("rendering") -> renderingControlScpd()
+        path.contains("connection") -> connectionManagerScpd()
+        else -> avTransportScpd()
+    }
+
+    private fun arg(name: String, direction: String, state: String) =
+        "<argument><name>$name</name><direction>$direction</direction><relatedStateVariable>$state</relatedStateVariable></argument>"
+    private fun action(name: String, vararg args: String) =
+        "<action><name>$name</name>${if (args.isEmpty()) "" else "<argumentList>${args.joinToString("")}</argumentList>"}</action>"
+    private fun state(name: String, type: String, events: Boolean = false, allowed: String = "") =
+        "<stateVariable sendEvents=\"${if (events) "yes" else "no"}\"><name>$name</name><dataType>$type</dataType>$allowed</stateVariable>"
+    private fun values(vararg values: String) = "<allowedValueList>${values.joinToString("") { "<allowedValue>$it</allowedValue>" }}</allowedValueList>"
+    private fun scpdDocument(actions: String, states: String) =
+        "<?xml version=\"1.0\"?><scpd xmlns=\"urn:schemas-upnp-org:service-1-0\"><specVersion><major>1</major><minor>0</minor></specVersion><actionList>$actions</actionList><serviceStateTable>$states</serviceStateTable></scpd>"
+
+    private fun avTransportScpd(): String {
+        val instance = arg("InstanceID", "in", "A_ARG_TYPE_InstanceID")
+        val actions = listOf(
+            action("SetAVTransportURI", instance, arg("CurrentURI", "in", "AVTransportURI"), arg("CurrentURIMetaData", "in", "AVTransportURIMetaData")),
+            action("SetNextAVTransportURI", instance, arg("NextURI", "in", "NextAVTransportURI"), arg("NextURIMetaData", "in", "NextAVTransportURIMetaData")),
+            action("Play", instance, arg("Speed", "in", "TransportPlaySpeed")), action("Pause", instance), action("Stop", instance),
+            action("Seek", instance, arg("Unit", "in", "A_ARG_TYPE_SeekMode"), arg("Target", "in", "A_ARG_TYPE_SeekTarget")),
+            action("GetTransportInfo", instance, arg("CurrentTransportState", "out", "TransportState"), arg("CurrentTransportStatus", "out", "TransportStatus"), arg("CurrentSpeed", "out", "TransportPlaySpeed")),
+            action("GetPositionInfo", instance, arg("Track", "out", "CurrentTrack"), arg("TrackDuration", "out", "CurrentTrackDuration"), arg("TrackMetaData", "out", "CurrentTrackMetaData"), arg("TrackURI", "out", "CurrentTrackURI"), arg("RelTime", "out", "RelativeTimePosition"), arg("AbsTime", "out", "AbsoluteTimePosition"), arg("RelCount", "out", "RelativeCounterPosition"), arg("AbsCount", "out", "AbsoluteCounterPosition")),
+            action("GetMediaInfo", instance, arg("NrTracks", "out", "NumberOfTracks"), arg("MediaDuration", "out", "CurrentMediaDuration"), arg("CurrentURI", "out", "AVTransportURI"), arg("CurrentURIMetaData", "out", "AVTransportURIMetaData"), arg("NextURI", "out", "NextAVTransportURI"), arg("NextURIMetaData", "out", "NextAVTransportURIMetaData"), arg("PlayMedium", "out", "PlaybackStorageMedium"), arg("RecordMedium", "out", "RecordStorageMedium"), arg("WriteStatus", "out", "RecordMediumWriteStatus")),
+            action("GetDeviceCapabilities", instance, arg("PlayMedia", "out", "PossiblePlaybackStorageMedia"), arg("RecMedia", "out", "PossibleRecordStorageMedia"), arg("RecQualityModes", "out", "PossibleRecordQualityModes")),
+            action("GetTransportSettings", instance, arg("PlayMode", "out", "CurrentPlayMode"), arg("RecQualityMode", "out", "CurrentRecordQualityMode")),
+            action("GetCurrentTransportActions", instance, arg("Actions", "out", "CurrentTransportActions"))
+        ).joinToString("")
+        val states = listOf(
+            state("TransportState", "string", true, values("STOPPED", "PLAYING", "TRANSITIONING", "PAUSED_PLAYBACK", "NO_MEDIA_PRESENT")), state("TransportStatus", "string", allowed = values("OK", "ERROR_OCCURRED")),
+            state("TransportPlaySpeed", "string", allowed = values("1")), state("AVTransportURI", "uri", true), state("AVTransportURIMetaData", "string", true), state("NextAVTransportURI", "uri"), state("NextAVTransportURIMetaData", "string"),
+            state("NumberOfTracks", "ui4"), state("CurrentMediaDuration", "string"), state("CurrentTrack", "ui4"), state("CurrentTrackDuration", "string"), state("CurrentTrackMetaData", "string"), state("CurrentTrackURI", "uri"),
+            state("RelativeTimePosition", "string"), state("AbsoluteTimePosition", "string"), state("RelativeCounterPosition", "i4"), state("AbsoluteCounterPosition", "i4"), state("CurrentTransportActions", "string"),
+            state("PlaybackStorageMedium", "string", allowed = values("NETWORK", "NONE")), state("RecordStorageMedium", "string", allowed = values("NOT_IMPLEMENTED")), state("RecordMediumWriteStatus", "string", allowed = values("NOT_IMPLEMENTED")),
+            state("PossiblePlaybackStorageMedia", "string"), state("PossibleRecordStorageMedia", "string"), state("PossibleRecordQualityModes", "string"), state("CurrentPlayMode", "string", allowed = values("NORMAL")), state("CurrentRecordQualityMode", "string"),
+            state("A_ARG_TYPE_InstanceID", "ui4"), state("A_ARG_TYPE_SeekMode", "string", allowed = values("REL_TIME", "ABS_TIME", "TRACK_NR")), state("A_ARG_TYPE_SeekTarget", "string")
+        ).joinToString("")
+        return scpdDocument(actions, states)
+    }
+
+    private fun renderingControlScpd(): String {
+        val instance = arg("InstanceID", "in", "A_ARG_TYPE_InstanceID")
+        val channel = arg("Channel", "in", "A_ARG_TYPE_Channel")
+        val actions = listOf(
+            action("GetVolume", instance, channel, arg("CurrentVolume", "out", "Volume")), action("SetVolume", instance, channel, arg("DesiredVolume", "in", "Volume")),
+            action("GetMute", instance, channel, arg("CurrentMute", "out", "Mute")), action("SetMute", instance, channel, arg("DesiredMute", "in", "Mute"))
+        ).joinToString("")
+        val states = state("Mute", "boolean", true) + state("Volume", "ui2", true, "<allowedValueRange><minimum>0</minimum><maximum>100</maximum><step>1</step></allowedValueRange>") + state("A_ARG_TYPE_Channel", "string", allowed = values("Master")) + state("A_ARG_TYPE_InstanceID", "ui4")
+        return scpdDocument(actions, states)
+    }
+
+    private fun connectionManagerScpd(): String {
+        val actions = listOf(
+            action("GetProtocolInfo", arg("Source", "out", "SourceProtocolInfo"), arg("Sink", "out", "SinkProtocolInfo")), action("GetCurrentConnectionIDs", arg("ConnectionIDs", "out", "CurrentConnectionIDs")),
+            action("GetCurrentConnectionInfo", arg("ConnectionID", "in", "A_ARG_TYPE_ConnectionID"), arg("RcsID", "out", "A_ARG_TYPE_RcsID"), arg("AVTransportID", "out", "A_ARG_TYPE_AVTransportID"), arg("ProtocolInfo", "out", "A_ARG_TYPE_ProtocolInfo"), arg("PeerConnectionManager", "out", "A_ARG_TYPE_ConnectionManager"), arg("PeerConnectionID", "out", "A_ARG_TYPE_ConnectionID"), arg("Direction", "out", "A_ARG_TYPE_Direction"), arg("Status", "out", "A_ARG_TYPE_ConnectionStatus"))
+        ).joinToString("")
+        val states = state("SourceProtocolInfo", "string", true) + state("SinkProtocolInfo", "string", true) + state("CurrentConnectionIDs", "string", true) + state("A_ARG_TYPE_ConnectionStatus", "string", allowed = values("OK", "ContentFormatMismatch", "InsufficientBandwidth", "UnreliableChannel", "Unknown")) + state("A_ARG_TYPE_ConnectionManager", "string") + state("A_ARG_TYPE_Direction", "string", allowed = values("Input", "Output")) + state("A_ARG_TYPE_ProtocolInfo", "string") + state("A_ARG_TYPE_ConnectionID", "i4") + state("A_ARG_TYPE_AVTransportID", "i4") + state("A_ARG_TYPE_RcsID", "i4")
+        return scpdDocument(actions, states)
+    }
     private fun subscribe(out: OutputStream) { val response = "HTTP/1.1 200 OK\r\nSID: uuid:${UUID.randomUUID()}\r\nTIMEOUT: Second-1800\r\nContent-Length: 0\r\n\r\n"; out.write(response.toByteArray()) }
     private fun xml(out: OutputStream, body: String) { val bytes = body.toByteArray(); out.write("HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray()); out.write(bytes) }
     private fun empty(out: OutputStream, code: Int) { out.write("HTTP/1.1 $code ${if (code == 200) "OK" else "Not Found"}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()) }
