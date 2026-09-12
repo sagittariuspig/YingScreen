@@ -187,7 +187,8 @@ class ReceiverRuntime(private val context: Context) {
             context = appContext,
             name = { "${dnsNotify?.deviceName ?: "家庭影院"}-影屏" },
             localIp = ::getLocalIpAddress,
-            onPlaybackChanged = ::onDlnaPlaybackChanged
+            onPlaybackChanged = ::onDlnaPlaybackChanged,
+            onVideoSizeChanged = ::onVideoSizeChanged
         ).also { it.start() }
 
         val airplayPort = airplay.port

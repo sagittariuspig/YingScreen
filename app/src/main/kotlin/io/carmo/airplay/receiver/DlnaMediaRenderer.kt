@@ -26,7 +26,8 @@ class DlnaMediaRenderer(
     context: Context,
     private val name: () -> String,
     private val localIp: () -> String,
-    private val onPlaybackChanged: (Boolean, String) -> Unit
+    private val onPlaybackChanged: (Boolean, String) -> Unit,
+    private val onVideoSizeChanged: (Int, Int) -> Unit
 ) {
     private val appContext = context.applicationContext
     // v2 identity intentionally invalidates controller caches created by the
@@ -258,6 +259,9 @@ class DlnaMediaRenderer(
             setAudioStreamType(AudioManager.STREAM_MUSIC)
             this@DlnaMediaRenderer.surface?.let { setSurface(it) }
             setOnPreparedListener { it.start(); transportState = "PLAYING"; onPlaybackChanged(true, "DLNA playing") }
+            setOnVideoSizeChangedListener { _, width, height ->
+                if (width > 0 && height > 0) onVideoSizeChanged(width, height)
+            }
             setOnCompletionListener { transportState = "STOPPED"; onPlaybackChanged(false, "DLNA finished") }
             setOnErrorListener { _, what, extra -> Log.e(TAG, "MediaPlayer error $what/$extra for $currentUri"); transportState = "STOPPED"; onPlaybackChanged(false, "DLNA playback error"); true }
             setDataSource(appContext, Uri.parse(currentUri), mapOf("User-Agent" to "YingScreen/${BuildConfig.VERSION_NAME} Android", "Referer" to currentUri.substringBeforeLast('/', "")))
