@@ -57,6 +57,8 @@ class ReceiverRuntime(private val context: Context) {
     private val transitionHistory = ArrayDeque<StateTransition>(MAX_TRANSITION_HISTORY)
 
     @Volatile private var isSurfaceAttached = false
+    @Volatile private var attachedSurface: Surface? = null
+    @Volatile private var dlnaPlaybackActive = false
     @Volatile private var lastUiLaunchAttemptAtMs = 0L
     @Volatile private var currentAudioVolume = 1.0f
     @Volatile private var activeHistorySessionId: Long? = null
@@ -239,7 +241,8 @@ class ReceiverRuntime(private val context: Context) {
      */
     fun attachSurface(surface: Surface) {
         isSurfaceAttached = true
-        raopServer?.attachSurface(surface)
+        attachedSurface = surface
+        if (!dlnaPlaybackActive) raopServer?.attachSurface(surface)
         dlnaRenderer?.attachSurface(surface)
     }
 
@@ -249,6 +252,7 @@ class ReceiverRuntime(private val context: Context) {
      */
     fun detachSurface() {
         isSurfaceAttached = false
+        attachedSurface = null
         raopServer?.detachSurface()
         dlnaRenderer?.detachSurface()
     }
@@ -392,8 +396,12 @@ class ReceiverRuntime(private val context: Context) {
 
     private fun onDlnaPlaybackChanged(active: Boolean, status: String) {
         mainHandler.post {
+            dlnaPlaybackActive = active
             setStreamStatus(status)
             if (active) {
+                // AirPlay and Android MediaPlayer cannot safely render to the same
+                // Surface at once. DLNA is an explicit playback request, so it wins.
+                raopServer?.detachSurface()
                 hdmiCecWakeController.wakeForIncomingConnection()
                 if (!isSurfaceAttached && ReceiverPreferences.automaticVideoTakeover(appContext)) {
                     bringReceiverToFront()
@@ -401,6 +409,7 @@ class ReceiverRuntime(private val context: Context) {
                 videoActivityListeners.forEach { it(true) }
                 transitionTo(ReceiverState.VIDEO_ACTIVE, "DLNA playback")
             } else {
+                attachedSurface?.takeIf { it.isValid }?.let { raopServer?.attachSurface(it) }
                 videoActivityListeners.forEach { it(false) }
                 transitionTo(ReceiverState.IDLE_ADVERTISING, "DLNA playback ended")
             }
@@ -415,6 +424,7 @@ class ReceiverRuntime(private val context: Context) {
     }
 
     private fun onVideoActivity(hasActivity: Boolean) {
+        if (dlnaPlaybackActive) return
         if (hasActivity && !isSurfaceAttached && ReceiverPreferences.automaticVideoTakeover(appContext)) {
             bringReceiverToFront()
         }
@@ -468,6 +478,7 @@ class ReceiverRuntime(private val context: Context) {
 
     private fun onRaopStateChanged(newState: ReceiverState) {
         mainHandler.post {
+            if (dlnaPlaybackActive) return@post
             if (newState == ReceiverState.IDLE_ADVERTISING) {
                 setStreamStatus("Waiting")
             }
