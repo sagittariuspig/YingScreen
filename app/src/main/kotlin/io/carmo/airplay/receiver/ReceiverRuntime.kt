@@ -100,6 +100,11 @@ class ReceiverRuntime(private val context: Context) {
 
     /** The display name used for AirPlay advertisement, e.g. "Living Room TV". */
     val deviceDisplayName: String get() = dnsNotify?.deviceName ?: "Receiver"
+    val isDlnaPlaybackActive: Boolean get() = dlnaPlaybackActive
+
+    fun toggleDlnaPlayback(): Boolean = dlnaRenderer?.togglePlayback() == true
+    fun seekDlnaBy(deltaMs: Int): Boolean = dlnaRenderer?.seekBy(deltaMs) == true
+    fun stopDlnaPlayback(): Boolean = dlnaRenderer?.stopFromRemote() == true
 
     fun addStateListener(listener: (ReceiverState) -> Unit) {
         stateListeners.add(listener)

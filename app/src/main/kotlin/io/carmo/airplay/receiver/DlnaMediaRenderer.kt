@@ -71,6 +71,45 @@ class DlnaMediaRenderer(
         if (running) workers.execute { sendNotify("ssdp:alive") }
     }
 
+    @Synchronized
+    fun togglePlayback(): Boolean {
+        val current = player ?: return false
+        return try {
+            if (current.isPlaying) {
+                current.pause()
+                transportState = "PAUSED_PLAYBACK"
+                onPlaybackChanged(true, "DLNA paused")
+            } else {
+                current.start()
+                transportState = "PLAYING"
+                onPlaybackChanged(true, "DLNA playing")
+            }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "remote play/pause failed", e)
+            false
+        }
+    }
+
+    @Synchronized
+    fun seekBy(deltaMs: Int): Boolean {
+        val current = player ?: return false
+        return try {
+            val duration = current.duration.takeIf { it > 0 } ?: Int.MAX_VALUE
+            current.seekTo((current.currentPosition + deltaMs).coerceIn(0, duration))
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "remote seek failed", e)
+            false
+        }
+    }
+
+    fun stopFromRemote(): Boolean {
+        if (player == null) return false
+        stopPlayback()
+        return true
+    }
+
     private fun runHttpServer() {
         try {
             // Prefer a stable LOCATION because Tencent Video caches it. Some TV

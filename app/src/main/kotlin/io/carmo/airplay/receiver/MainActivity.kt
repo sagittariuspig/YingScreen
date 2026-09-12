@@ -420,10 +420,23 @@ class MainActivity : ComponentActivity() {
                 adjustVolume(-1)
                 true
             }
+            KeyEvent.KEYCODE_MEDIA_REWIND -> seekDlnaFromRemote(-REMOTE_SEEK_MS)
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> seekDlnaFromRemote(REMOTE_SEEK_MS)
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_MEDIA_PLAY,
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> toggleDlnaFromRemote()
+            KeyEvent.KEYCODE_MEDIA_STOP -> runtime?.stopDlnaPlayback() == true
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 if (isReadyOverlayFocusTarget()) {
                     handleReadyOverlayKey(keyCode)
+                } else if (runtime?.isDlnaPlaybackActive == true &&
+                    streamOverlay.visibility != View.VISIBLE &&
+                    streamInfoOverlay.visibility != View.VISIBLE
+                ) {
+                    seekDlnaFromRemote(
+                        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -REMOTE_SEEK_MS else REMOTE_SEEK_MS
+                    )
                 } else if (isStreaming && streamOverlay.visibility == View.VISIBLE) {
                     handleStreamOverlayKey(keyCode)
                 } else {
@@ -444,6 +457,11 @@ class MainActivity : ComponentActivity() {
                     handleReadyOverlayKey(keyCode)
                 } else if (!isStreaming) {
                     return false
+                } else if (runtime?.isDlnaPlaybackActive == true &&
+                    streamOverlay.visibility != View.VISIBLE &&
+                    streamInfoOverlay.visibility != View.VISIBLE
+                ) {
+                    return toggleDlnaFromRemote()
                 } else {
                     if (streamOverlay.visibility == View.VISIBLE) {
                         handleStreamOverlayKey(keyCode)
@@ -473,6 +491,24 @@ class MainActivity : ComponentActivity() {
             }
             else -> false
         }
+    }
+
+    private fun seekDlnaFromRemote(deltaMs: Int): Boolean {
+        val handled = runtime?.seekDlnaBy(deltaMs) == true
+        if (handled) {
+            Toast.makeText(
+                this,
+                if (deltaMs < 0) "快退 10 秒" else "快进 10 秒",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+        return handled
+    }
+
+    private fun toggleDlnaFromRemote(): Boolean {
+        val handled = runtime?.toggleDlnaPlayback() == true
+        if (handled) Toast.makeText(this, "播放 / 暂停", Toast.LENGTH_SHORT).show()
+        return handled
     }
 
     private fun registerRuntimeListeners(boundRuntime: ReceiverRuntime) {
@@ -1673,6 +1709,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val REMOTE_SEEK_MS = 10_000
         private const val TAG = "Receiver"
         private const val WAKE_LOCK_TAG = "ReceiverActive"
         private const val WAKE_NUDGE_LOCK_TAG = "ReceiverActivity"
