@@ -407,7 +407,15 @@ class ReceiverRuntime(private val context: Context) {
                     bringReceiverToFront()
                 }
                 videoActivityListeners.forEach { it(true) }
-                transitionTo(ReceiverState.VIDEO_ACTIVE, "DLNA playback")
+                if (state == ReceiverState.IDLE_ADVERTISING || state == ReceiverState.AUDIO_ACTIVE) {
+                    transitionTo(ReceiverState.VIDEO_REQUESTED, "DLNA playback requested")
+                }
+                if (state == ReceiverState.VIDEO_REQUESTED || state == ReceiverState.WAITING_FOR_SURFACE) {
+                    transitionTo(ReceiverState.VIDEO_STARTING, "DLNA player loading")
+                }
+                if (status == "DLNA playing" && state == ReceiverState.VIDEO_STARTING) {
+                    transitionTo(ReceiverState.VIDEO_ACTIVE, "DLNA player started")
+                }
             } else {
                 attachedSurface?.takeIf { it.isValid }?.let { raopServer?.attachSurface(it) }
                 videoActivityListeners.forEach { it(false) }
