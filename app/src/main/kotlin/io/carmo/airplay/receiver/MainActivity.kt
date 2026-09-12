@@ -404,6 +404,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleRemoteKey(keyCode: Int): Boolean {
+        // Playback controls must win over Compose/overlay focus on older TV
+        // firmware. X9S delivers standard DPAD/ENTER codes, but the hidden ready
+        // overlay can otherwise consume them before the stream branch below.
+        if (runtime?.isDlnaPlaybackActive == true) {
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> return seekDlnaFromRemote(-REMOTE_SEEK_MS)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> return seekDlnaFromRemote(REMOTE_SEEK_MS)
+                KeyEvent.KEYCODE_DPAD_UP -> return seekDlnaFromRemote(REMOTE_LONG_SEEK_MS)
+                KeyEvent.KEYCODE_DPAD_DOWN -> return seekDlnaFromRemote(-REMOTE_LONG_SEEK_MS)
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER -> return toggleDlnaFromRemote()
+            }
+        }
         val readyVisible = ::readyOverlay.isInitialized && readyOverlay.visibility == View.VISIBLE
         if (::quickSettingsOverlay.isInitialized &&
             quickSettingsOverlay.visibility == View.VISIBLE &&
@@ -498,7 +511,11 @@ class MainActivity : ComponentActivity() {
         if (handled) {
             Toast.makeText(
                 this,
-                if (deltaMs < 0) "快退 10 秒" else "快进 10 秒",
+                if (deltaMs < 0) {
+                    "快退 ${kotlin.math.abs(deltaMs) / 1000} 秒"
+                } else {
+                    "快进 ${deltaMs / 1000} 秒"
+                },
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -1710,6 +1727,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val REMOTE_SEEK_MS = 10_000
+        private const val REMOTE_LONG_SEEK_MS = 60_000
         private const val TAG = "Receiver"
         private const val WAKE_LOCK_TAG = "ReceiverActive"
         private const val WAKE_NUDGE_LOCK_TAG = "ReceiverActivity"
