@@ -6,8 +6,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.util.Log
 import android.view.Surface
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.net.DatagramPacket
 import java.net.InetAddress
@@ -142,24 +141,35 @@ class DlnaMediaRenderer(
         socket.use {
             try {
                 it.soTimeout = 5000
-                val reader = BufferedReader(InputStreamReader(it.getInputStream(), Charsets.UTF_8))
-                val requestLine = reader.readLine() ?: return
+                val input = it.getInputStream()
+                val headerBytes = ByteArrayOutputStream()
+                var matched = 0
+                val boundary = byteArrayOf(13, 10, 13, 10)
+                while (headerBytes.size() < MAX_HEADER_BYTES) {
+                    val value = input.read()
+                    if (value < 0) return
+                    headerBytes.write(value)
+                    matched = if (value.toByte() == boundary[matched]) matched + 1 else if (value == 13) 1 else 0
+                    if (matched == boundary.size) break
+                }
+                if (matched != boundary.size) return
+                val headerText = String(headerBytes.toByteArray(), Charsets.ISO_8859_1)
+                val lines = headerText.split("\r\n")
+                val requestLine = lines.firstOrNull() ?: return
                 val headers = linkedMapOf<String, String>()
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    if (line.isEmpty()) break
+                lines.drop(1).forEach { line ->
                     val colon = line.indexOf(':')
                     if (colon > 0) headers[line.substring(0, colon).trim().lowercase(Locale.US)] = line.substring(colon + 1).trim()
                 }
                 val length = headers["content-length"]?.toIntOrNull() ?: 0
-                val chars = CharArray(length)
+                val bodyBytes = ByteArray(length)
                 var read = 0
                 while (read < length) {
-                    val count = reader.read(chars, read, length - read)
+                    val count = input.read(bodyBytes, read, length - read)
                     if (count <= 0) break
                     read += count
                 }
-                val body = String(chars, 0, read)
+                val body = String(bodyBytes, 0, read, Charsets.UTF_8)
                 val parts = requestLine.split(' ')
                 val method = parts.getOrElse(0) { "" }.uppercase(Locale.US)
                 val path = parts.getOrElse(1) { "/" }.substringBefore('?')
@@ -264,6 +274,7 @@ class DlnaMediaRenderer(
         private const val TAG = "Receiver-DLNA"
         private const val SSDP_HOST = "239.255.255.250"
         private const val SSDP_PORT = 1900
+        private const val MAX_HEADER_BYTES = 64 * 1024
         private const val RENDERER_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1"
         private const val AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
         private const val RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
