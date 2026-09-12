@@ -50,6 +50,8 @@ class DlnaMediaRenderer(
     @Volatile private var player: MediaPlayer? = null
     @Volatile private var exoPlayer: ExoPlayer? = null
     @Volatile private var exoGeneration = 0
+    @Volatile private var retryCount = 0
+    @Volatile private var systemFallbackUsed = false
     @Volatile private var surface: Surface? = null
     @Volatile private var currentUri = ""
     @Volatile private var currentMeta = ""
@@ -90,7 +92,7 @@ class DlnaMediaRenderer(
         exoPlayer?.let {
             val playing = withExo(false) { current -> current.playWhenReady = !current.playWhenReady; current.playWhenReady }
             transportState = if (playing) "PLAYING" else "PAUSED_PLAYBACK"
-            onPlaybackChanged(true, if (playing) "DLNA playing" else "DLNA paused")
+            onPlaybackChanged(true, if (playing) STATUS_PLAYING else STATUS_PAUSED)
             return true
         }
         val current = player ?: return false
@@ -98,11 +100,11 @@ class DlnaMediaRenderer(
             if (current.isPlaying) {
                 current.pause()
                 transportState = "PAUSED_PLAYBACK"
-                onPlaybackChanged(true, "DLNA paused")
+                onPlaybackChanged(true, STATUS_PAUSED)
             } else {
                 current.start()
                 transportState = "PLAYING"
-                onPlaybackChanged(true, "DLNA playing")
+                onPlaybackChanged(true, STATUS_PLAYING)
             }
             true
         } catch (e: Exception) {
@@ -293,12 +295,14 @@ class DlnaMediaRenderer(
                     // strict signatures such as iQIYI's `vf` parameter.
                     currentUri = xmlValue(body, "CurrentURI").decodeXml()
                     currentMeta = xmlValue(body, "CurrentURIMetaData").decodeXml()
+                    retryCount = 0
+                    systemFallbackUsed = false
                     transportState = "STOPPED"
                     ""
                 }
                 "SetNextAVTransportURI" -> ""
                 "Play" -> { play(); "" }
-                "Pause" -> { if (exoPlayer != null) withExo(Unit) { it.pause() } else player?.pause(); transportState = "PAUSED_PLAYBACK"; onPlaybackChanged(true, "DLNA paused"); "" }
+                "Pause" -> { if (exoPlayer != null) withExo(Unit) { it.pause() } else player?.pause(); transportState = "PAUSED_PLAYBACK"; onPlaybackChanged(true, STATUS_PAUSED); "" }
                 "Stop" -> { stopPlayback(); "" }
                 "Seek" -> { seek(xmlValue(body, "Target")); "" }
                 "GetTransportInfo" -> "<CurrentTransportState>$transportState</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus><CurrentSpeed>1</CurrentSpeed>"
@@ -326,26 +330,37 @@ class DlnaMediaRenderer(
 
     @Synchronized private fun play() {
         if (currentUri.isBlank()) throw IllegalStateException("No URI")
-        if (Uri.parse(currentUri).host?.endsWith("iqiyi.com", true) == true) {
+        if (prefersCompatiblePlayer(currentUri)) {
             playWithExoPlayer()
             return
         }
         val existing = player
         if (existing != null && transportState == "PAUSED_PLAYBACK") {
-            existing.start(); transportState = "PLAYING"; onPlaybackChanged(true, "DLNA playing"); return
+            existing.start(); transportState = "PLAYING"; onPlaybackChanged(true, STATUS_PLAYING); return
         }
         releasePlayer()
         transportState = "TRANSITIONING"
-        onPlaybackChanged(true, "DLNA loading")
+        onPlaybackChanged(true, STATUS_LOADING)
         player = MediaPlayer().apply {
             setAudioStreamType(AudioManager.STREAM_MUSIC)
             this@DlnaMediaRenderer.surface?.let { setSurface(it) }
-            setOnPreparedListener { it.start(); transportState = "PLAYING"; onPlaybackChanged(true, "DLNA playing") }
+            setOnPreparedListener { retryCount = 0; it.start(); transportState = "PLAYING"; onPlaybackChanged(true, STATUS_PLAYING) }
             setOnVideoSizeChangedListener { _, width, height ->
                 if (width > 0 && height > 0) onVideoSizeChanged(width, height)
             }
-            setOnCompletionListener { transportState = "STOPPED"; onPlaybackChanged(false, "DLNA finished") }
-            setOnErrorListener { _, what, extra -> Log.e(TAG, "MediaPlayer error $what/$extra for $currentUri"); transportState = "STOPPED"; onPlaybackChanged(false, "DLNA playback error"); true }
+            setOnCompletionListener { transportState = "STOPPED"; onPlaybackChanged(false, STATUS_FINISHED) }
+            setOnErrorListener { _, what, extra ->
+                Log.e(TAG, "MediaPlayer error $what/$extra for $currentUri")
+                if (!systemFallbackUsed) {
+                    systemFallbackUsed = true
+                    onPlaybackChanged(true, STATUS_SWITCHING_PLAYER)
+                    workers.execute { playWithExoPlayer() }
+                } else {
+                    transportState = "STOPPED"
+                    onPlaybackChanged(false, STATUS_ERROR)
+                }
+                true
+            }
             setDataSource(appContext, Uri.parse(currentUri), mapOf("User-Agent" to "YingScreen/${BuildConfig.VERSION_NAME} Android", "Referer" to currentUri.substringBeforeLast('/', "")))
             prepareAsync()
         }
@@ -354,12 +369,12 @@ class DlnaMediaRenderer(
     @Synchronized private fun playWithExoPlayer() {
         exoPlayer?.let {
             if (transportState == "PAUSED_PLAYBACK") {
-                withExo(Unit) { current -> current.play() }; transportState = "PLAYING"; onPlaybackChanged(true, "DLNA playing"); return
+                withExo(Unit) { current -> current.play() }; transportState = "PLAYING"; onPlaybackChanged(true, STATUS_PLAYING); return
             }
         }
         releasePlayer()
         transportState = "TRANSITIONING"
-        onPlaybackChanged(true, "DLNA loading")
+        onPlaybackChanged(true, STATUS_LOADING)
         val generation = exoGeneration
         exoHandler.post {
             if (generation != exoGeneration) return@post
@@ -368,8 +383,9 @@ class DlnaMediaRenderer(
                 addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     when (state) {
-                        Player.STATE_READY -> { transportState = "PLAYING"; onPlaybackChanged(true, "DLNA playing") }
-                        Player.STATE_ENDED -> { transportState = "STOPPED"; onPlaybackChanged(false, "DLNA finished") }
+                        Player.STATE_BUFFERING -> onPlaybackChanged(true, STATUS_BUFFERING)
+                        Player.STATE_READY -> { retryCount = 0; transportState = "PLAYING"; onPlaybackChanged(true, STATUS_PLAYING) }
+                        Player.STATE_ENDED -> { transportState = "STOPPED"; onPlaybackChanged(false, STATUS_FINISHED) }
                     }
                 }
                 override fun onVideoSizeChanged(videoSize: com.google.android.exoplayer2.video.VideoSize) {
@@ -377,8 +393,21 @@ class DlnaMediaRenderer(
                 }
                 override fun onPlayerError(error: PlaybackException) {
                     Log.e(TAG, "ExoPlayer error ${error.errorCodeName} for $currentUri", error)
-                    transportState = "STOPPED"
-                    onPlaybackChanged(false, "DLNA playback error")
+                    if (retryCount < MAX_PLAYBACK_RETRIES) {
+                        retryCount++
+                        transportState = "TRANSITIONING"
+                        onPlaybackChanged(true, "播放中断，正在重试 $retryCount/$MAX_PLAYBACK_RETRIES")
+                        val expectedGeneration = generation
+                        exoHandler.postDelayed({
+                            if (expectedGeneration == exoGeneration && exoPlayer === this@apply) {
+                                prepare()
+                                play()
+                            }
+                        }, RETRY_DELAY_MS)
+                    } else {
+                        transportState = "STOPPED"
+                        onPlaybackChanged(false, STATUS_ERROR)
+                    }
                 }
                 })
                 setMediaItem(MediaItem.fromUri(currentUri))
@@ -388,7 +417,7 @@ class DlnaMediaRenderer(
         }
     }
 
-    @Synchronized private fun stopPlayback() { releasePlayer(); transportState = "STOPPED"; onPlaybackChanged(false, "DLNA stopped") }
+    @Synchronized private fun stopPlayback() { releasePlayer(); transportState = "STOPPED"; onPlaybackChanged(false, STATUS_STOPPED) }
     @Synchronized private fun releasePlayer() { try { player?.reset(); player?.release() } catch (_: Exception) {}; player = null; exoGeneration++; val oldExo = exoPlayer; exoPlayer = null; if (oldExo != null) exoHandler.post { try { oldExo.release() } catch (_: Exception) {} } }
     private fun seek(target: String) { val position = parseTime(target); if (exoPlayer != null) withExo(Unit) { it.seekTo(position.toLong()) } else player?.seekTo(position); transportState = "PLAYING" }
     private fun parseTime(value: String): Int { val p = value.split(':'); return if (p.size == 3) ((p[0].toLongOrNull() ?: 0) * 3600 + (p[1].toLongOrNull() ?: 0) * 60 + (p[2].substringBefore('.').toLongOrNull() ?: 0)).times(1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else 0 }
@@ -409,6 +438,12 @@ class DlnaMediaRenderer(
     }
     private fun volumePercent(): Int { val a = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager; val max = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC); return if (max == 0) 0 else a.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / max }
     private fun setVolume(percent: Int) { val a = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager; a.setStreamVolume(AudioManager.STREAM_MUSIC, a.getStreamMaxVolume(AudioManager.STREAM_MUSIC) * percent.coerceIn(0, 100) / 100, 0) }
+
+    private fun prefersCompatiblePlayer(uri: String): Boolean {
+        val host = Uri.parse(uri).host.orEmpty().lowercase(Locale.US)
+        return host.endsWith("iqiyi.com") || host.endsWith("youku.com") ||
+            host.endsWith("ykimg.com") || host.endsWith("alicdn.com")
+    }
 
     private fun deviceDescription() = """<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><URLBase>${location().substringBeforeLast('/')}/</URLBase><device><deviceType>$RENDERER_TYPE</deviceType><friendlyName>${name().xmlEscape()}</friendlyName><manufacturer>YingScreen</manufacturer><manufacturerURL>https://github.com/sagittariuspig/YingScreen</manufacturerURL><modelDescription>AirPlay and DLNA receiver for Android TV</modelDescription><modelName>影屏</modelName><modelNumber>${BuildConfig.VERSION_NAME}</modelNumber><serialNumber>${uuid.toString().take(12)}</serialNumber><UDN>uuid:$uuid</UDN><dlna:X_DLNADOC>DMR-1.50</dlna:X_DLNADOC><dlna:X_DLNACAP>av-upload,image-upload,audio-upload</dlna:X_DLNACAP><serviceList>${serviceXml(AV_TRANSPORT, "AVTransport", "avtransport")}${serviceXml(RENDERING_CONTROL, "RenderingControl", "renderingcontrol")}${serviceXml(CONNECTION_MANAGER, "ConnectionManager", "connectionmanager")}</serviceList></device></root>"""
     private fun serviceXml(type: String, id: String, path: String) = "<service><serviceType>$type</serviceType><serviceId>urn:upnp-org:serviceId:$id</serviceId><SCPDURL>/$path-scpd.xml</SCPDURL><controlURL>/control/$path</controlURL><eventSubURL>/event/$path</eventSubURL></service>"
@@ -488,6 +523,16 @@ class DlnaMediaRenderer(
         private const val SSDP_PORT = 1900
         private val DLNA_HTTP_PORTS = intArrayOf(49222, 49223, 49224, 49225)
         private const val MAX_HEADER_BYTES = 64 * 1024
+        private const val MAX_PLAYBACK_RETRIES = 2
+        private const val RETRY_DELAY_MS = 1_200L
+        private const val STATUS_LOADING = "正在连接视频…"
+        private const val STATUS_BUFFERING = "正在缓冲…"
+        private const val STATUS_PLAYING = "正在播放"
+        private const val STATUS_PAUSED = "已暂停"
+        private const val STATUS_SWITCHING_PLAYER = "正在切换兼容播放器…"
+        private const val STATUS_ERROR = "播放失败，请在手机端重试"
+        private const val STATUS_FINISHED = "播放结束"
+        private const val STATUS_STOPPED = "投屏已停止"
         private const val RENDERER_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1"
         private const val AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
         private const val RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"

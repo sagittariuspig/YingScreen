@@ -420,7 +420,7 @@ class ReceiverRuntime(private val context: Context) {
                 if (state == ReceiverState.VIDEO_REQUESTED || state == ReceiverState.WAITING_FOR_SURFACE) {
                     transitionTo(ReceiverState.VIDEO_STARTING, "DLNA player loading")
                 }
-                if (status == "DLNA playing" && state == ReceiverState.VIDEO_STARTING) {
+                if (status == "正在播放" && state == ReceiverState.VIDEO_STARTING) {
                     transitionTo(ReceiverState.VIDEO_ACTIVE, "DLNA player started")
                 }
             } else {

@@ -24,11 +24,18 @@ class NetworkMonitor(
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isRegistered = false
+    private val delayedRefresh = Runnable { onNetworkAvailable() }
+
+    private fun scheduleRefresh() {
+        mainHandler.removeCallbacks(delayedRefresh)
+        mainHandler.post { onNetworkAvailable() }
+        mainHandler.postDelayed(delayedRefresh, SECOND_REFRESH_DELAY_MS)
+    }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             Log.d(TAG, "network available")
-            mainHandler.postDelayed({ onNetworkAvailable() }, REFRESH_DELAY_MS)
+            scheduleRefresh()
         }
 
         override fun onLost(network: Network) {
@@ -37,7 +44,7 @@ class NetworkMonitor(
         }
 
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-            mainHandler.postDelayed({ onNetworkAvailable() }, REFRESH_DELAY_MS)
+            scheduleRefresh()
         }
     }
 
@@ -56,6 +63,7 @@ class NetworkMonitor(
     }
 
     fun stop() {
+        mainHandler.removeCallbacks(delayedRefresh)
         if (!isRegistered) return
         try {
             connectivityManager.unregisterNetworkCallback(networkCallback)
@@ -67,6 +75,6 @@ class NetworkMonitor(
 
     companion object {
         private const val TAG = "Receiver-Network"
-        private const val REFRESH_DELAY_MS = 2_000L
+        private const val SECOND_REFRESH_DELAY_MS = 2_500L
     }
 }
