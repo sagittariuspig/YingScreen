@@ -69,7 +69,9 @@ class DlnaMediaRenderer(
 
     private fun runHttpServer() {
         try {
-            val server = ServerSocket(0)
+            // Keep LOCATION stable across app/device restarts. Tencent Video and
+            // several DLNA controllers cache the descriptor URL for a long time.
+            val server = ServerSocket(DLNA_HTTP_PORT)
             httpServer = server
             Log.i(TAG, "DLNA HTTP server on ${server.localPort}")
             sendNotify("ssdp:alive")
@@ -274,6 +276,7 @@ class DlnaMediaRenderer(
         private const val TAG = "Receiver-DLNA"
         private const val SSDP_HOST = "239.255.255.250"
         private const val SSDP_PORT = 1900
+        private const val DLNA_HTTP_PORT = 49152
         private const val MAX_HEADER_BYTES = 64 * 1024
         private const val RENDERER_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1"
         private const val AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
