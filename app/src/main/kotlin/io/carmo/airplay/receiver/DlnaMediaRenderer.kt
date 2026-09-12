@@ -22,7 +22,6 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.BindException
-import java.net.URLDecoder
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -289,7 +288,10 @@ class DlnaMediaRenderer(
         try {
             val response = when (action) {
                 "SetAVTransportURI" -> {
-                    currentUri = xmlValue(body, "CurrentURI").decodeXml().decodeUrl()
+                    // The controller sends an already encoded, signed URL. Decoding the
+                    // whole URI mutates percent-encoded query values and invalidates
+                    // strict signatures such as iQIYI's `vf` parameter.
+                    currentUri = xmlValue(body, "CurrentURI").decodeXml()
                     currentMeta = xmlValue(body, "CurrentURIMetaData").decodeXml()
                     transportState = "STOPPED"
                     ""
@@ -479,7 +481,6 @@ class DlnaMediaRenderer(
     private fun xmlValue(xml: String, tag: String): String { val regex = Regex("<(?:[\\w-]+:)?$tag(?:\\s[^>]*)?>(.*?)</(?:[\\w-]+:)?$tag>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)); return regex.find(xml)?.groupValues?.get(1)?.trim().orEmpty() }
     private fun String.xmlEscape() = replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;")
     private fun String.decodeXml() = replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
-    private fun String.decodeUrl() = try { URLDecoder.decode(this, "UTF-8") } catch (_: Exception) { this }
 
     companion object {
         private const val TAG = "Receiver-DLNA"
