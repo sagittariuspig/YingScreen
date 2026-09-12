@@ -14,6 +14,7 @@ import java.net.MulticastSocket
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.BindException
 import java.net.URLDecoder
 import java.util.Locale
 import java.util.UUID
@@ -69,9 +70,10 @@ class DlnaMediaRenderer(
 
     private fun runHttpServer() {
         try {
-            // Keep LOCATION stable across app/device restarts. Tencent Video and
-            // several DLNA controllers cache the descriptor URL for a long time.
-            val server = ServerSocket(DLNA_HTTP_PORT)
+            // Prefer a stable LOCATION because Tencent Video caches it. Some TV
+            // firmwares reserve arbitrary high ports, so try deterministic
+            // fallbacks before finally asking the OS for an ephemeral port.
+            val server = openHttpServer()
             httpServer = server
             Log.i(TAG, "DLNA HTTP server on ${server.localPort}")
             sendNotify("ssdp:alive")
@@ -82,6 +84,18 @@ class DlnaMediaRenderer(
         } catch (e: Exception) {
             if (running) Log.e(TAG, "DLNA HTTP server failed", e)
         }
+    }
+
+    private fun openHttpServer(): ServerSocket {
+        DLNA_HTTP_PORTS.forEach { port ->
+            try {
+                return ServerSocket(port)
+            } catch (e: BindException) {
+                Log.w(TAG, "DLNA port $port is occupied; trying fallback")
+            }
+        }
+        Log.w(TAG, "all preferred DLNA ports occupied; using ephemeral port")
+        return ServerSocket(0)
     }
 
     private fun runSsdp() {
@@ -276,7 +290,7 @@ class DlnaMediaRenderer(
         private const val TAG = "Receiver-DLNA"
         private const val SSDP_HOST = "239.255.255.250"
         private const val SSDP_PORT = 1900
-        private const val DLNA_HTTP_PORT = 49152
+        private val DLNA_HTTP_PORTS = intArrayOf(49222, 49223, 49224, 49225)
         private const val MAX_HEADER_BYTES = 64 * 1024
         private const val RENDERER_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1"
         private const val AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
