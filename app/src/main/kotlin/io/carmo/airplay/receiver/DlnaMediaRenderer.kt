@@ -6,6 +6,10 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.util.Log
 import android.view.Surface
+import com.google.android.exoplayer2.ExoPlayer
+import com.google.android.exoplayer2.MediaItem
+import com.google.android.exoplayer2.PlaybackException
+import com.google.android.exoplayer2.Player
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.net.DatagramPacket
@@ -38,6 +42,7 @@ class DlnaMediaRenderer(
     @Volatile private var httpServer: ServerSocket? = null
     @Volatile private var ssdpSocket: MulticastSocket? = null
     @Volatile private var player: MediaPlayer? = null
+    @Volatile private var exoPlayer: ExoPlayer? = null
     @Volatile private var surface: Surface? = null
     @Volatile private var currentUri = ""
     @Volatile private var currentMeta = ""
@@ -60,11 +65,13 @@ class DlnaMediaRenderer(
     fun attachSurface(value: Surface) {
         surface = value
         try { player?.setSurface(value) } catch (e: Exception) { Log.w(TAG, "setSurface failed", e) }
+        exoPlayer?.setVideoSurface(value)
     }
 
     fun detachSurface() {
         surface = null
         try { player?.setSurface(null) } catch (_: Exception) {}
+        exoPlayer?.clearVideoSurface()
     }
 
     fun refreshAdvertisement() {
@@ -73,6 +80,12 @@ class DlnaMediaRenderer(
 
     @Synchronized
     fun togglePlayback(): Boolean {
+        exoPlayer?.let {
+            it.playWhenReady = !it.playWhenReady
+            transportState = if (it.playWhenReady) "PLAYING" else "PAUSED_PLAYBACK"
+            onPlaybackChanged(true, if (it.playWhenReady) "DLNA playing" else "DLNA paused")
+            return true
+        }
         val current = player ?: return false
         return try {
             if (current.isPlaying) {
@@ -93,6 +106,11 @@ class DlnaMediaRenderer(
 
     @Synchronized
     fun seekBy(deltaMs: Int): Boolean {
+        exoPlayer?.let {
+            val duration = it.duration.takeIf { value -> value > 0 } ?: Long.MAX_VALUE
+            it.seekTo((it.currentPosition + deltaMs).coerceIn(0L, duration))
+            return true
+        }
         val current = player ?: return false
         return try {
             val duration = current.duration.takeIf { it > 0 } ?: Int.MAX_VALUE
@@ -105,12 +123,13 @@ class DlnaMediaRenderer(
     }
 
     fun stopFromRemote(): Boolean {
-        if (player == null) return false
+        if (player == null && exoPlayer == null) return false
         stopPlayback()
         return true
     }
 
     fun playbackProgress(): Pair<Int, Int>? {
+        exoPlayer?.let { return it.currentPosition.coerceAtLeast(0).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() to it.duration.coerceAtLeast(0).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
         val current = player ?: return null
         return try {
             current.currentPosition.coerceAtLeast(0) to current.duration.coerceAtLeast(0)
@@ -267,7 +286,7 @@ class DlnaMediaRenderer(
                 }
                 "SetNextAVTransportURI" -> ""
                 "Play" -> { play(); "" }
-                "Pause" -> { player?.pause(); transportState = "PAUSED_PLAYBACK"; onPlaybackChanged(true, "DLNA paused"); "" }
+                "Pause" -> { exoPlayer?.pause() ?: player?.pause(); transportState = "PAUSED_PLAYBACK"; onPlaybackChanged(true, "DLNA paused"); "" }
                 "Stop" -> { stopPlayback(); "" }
                 "Seek" -> { seek(xmlValue(body, "Target")); "" }
                 "GetTransportInfo" -> "<CurrentTransportState>$transportState</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus><CurrentSpeed>1</CurrentSpeed>"
@@ -295,6 +314,10 @@ class DlnaMediaRenderer(
 
     @Synchronized private fun play() {
         if (currentUri.isBlank()) throw IllegalStateException("No URI")
+        if (Uri.parse(currentUri).host?.endsWith("iqiyi.com", true) == true) {
+            playWithExoPlayer()
+            return
+        }
         val existing = player
         if (existing != null && transportState == "PAUSED_PLAYBACK") {
             existing.start(); transportState = "PLAYING"; onPlaybackChanged(true, "DLNA playing"); return
@@ -316,13 +339,46 @@ class DlnaMediaRenderer(
         }
     }
 
+    @Synchronized private fun playWithExoPlayer() {
+        exoPlayer?.let {
+            if (transportState == "PAUSED_PLAYBACK") {
+                it.play(); transportState = "PLAYING"; onPlaybackChanged(true, "DLNA playing"); return
+            }
+        }
+        releasePlayer()
+        transportState = "TRANSITIONING"
+        onPlaybackChanged(true, "DLNA loading")
+        exoPlayer = ExoPlayer.Builder(appContext).build().apply {
+            this@DlnaMediaRenderer.surface?.let { setVideoSurface(it) }
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    when (state) {
+                        Player.STATE_READY -> { transportState = "PLAYING"; onPlaybackChanged(true, "DLNA playing") }
+                        Player.STATE_ENDED -> { transportState = "STOPPED"; onPlaybackChanged(false, "DLNA finished") }
+                    }
+                }
+                override fun onVideoSizeChanged(videoSize: com.google.android.exoplayer2.video.VideoSize) {
+                    if (videoSize.width > 0 && videoSize.height > 0) this@DlnaMediaRenderer.onVideoSizeChanged(videoSize.width, videoSize.height)
+                }
+                override fun onPlayerError(error: PlaybackException) {
+                    Log.e(TAG, "ExoPlayer error ${error.errorCodeName} for $currentUri", error)
+                    transportState = "STOPPED"
+                    onPlaybackChanged(false, "DLNA playback error")
+                }
+            })
+            setMediaItem(MediaItem.fromUri(currentUri))
+            playWhenReady = true
+            prepare()
+        }
+    }
+
     @Synchronized private fun stopPlayback() { releasePlayer(); transportState = "STOPPED"; onPlaybackChanged(false, "DLNA stopped") }
-    @Synchronized private fun releasePlayer() { try { player?.reset(); player?.release() } catch (_: Exception) {}; player = null }
-    private fun seek(target: String) { player?.seekTo(parseTime(target)); transportState = "PLAYING" }
+    @Synchronized private fun releasePlayer() { try { player?.reset(); player?.release() } catch (_: Exception) {}; player = null; try { exoPlayer?.release() } catch (_: Exception) {}; exoPlayer = null }
+    private fun seek(target: String) { val position = parseTime(target); exoPlayer?.seekTo(position.toLong()) ?: player?.seekTo(position); transportState = "PLAYING" }
     private fun parseTime(value: String): Int { val p = value.split(':'); return if (p.size == 3) ((p[0].toLongOrNull() ?: 0) * 3600 + (p[1].toLongOrNull() ?: 0) * 60 + (p[2].substringBefore('.').toLongOrNull() ?: 0)).times(1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else 0 }
     private fun time(ms: Int): String { val s = ms.coerceAtLeast(0) / 1000; return "%02d:%02d:%02d".format(Locale.US, s / 3600, s / 60 % 60, s % 60) }
-    private fun duration() = time(try { player?.duration ?: 0 } catch (_: Exception) { 0 })
-    private fun positionInfo(): String { val p = try { player?.currentPosition ?: 0 } catch (_: Exception) { 0 }; return "<Track>1</Track><TrackDuration>${duration()}</TrackDuration><TrackMetaData>${currentMeta.xmlEscape()}</TrackMetaData><TrackURI>${currentUri.xmlEscape()}</TrackURI><RelTime>${time(p)}</RelTime><AbsTime>${time(p)}</AbsTime><RelCount>2147483647</RelCount><AbsCount>2147483647</AbsCount>" }
+    private fun duration() = time(exoPlayer?.duration?.takeIf { it > 0 }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: try { player?.duration ?: 0 } catch (_: Exception) { 0 })
+    private fun positionInfo(): String { val p = exoPlayer?.currentPosition?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: try { player?.currentPosition ?: 0 } catch (_: Exception) { 0 }; return "<Track>1</Track><TrackDuration>${duration()}</TrackDuration><TrackMetaData>${currentMeta.xmlEscape()}</TrackMetaData><TrackURI>${currentUri.xmlEscape()}</TrackURI><RelTime>${time(p)}</RelTime><AbsTime>${time(p)}</AbsTime><RelCount>2147483647</RelCount><AbsCount>2147483647</AbsCount>" }
     private fun volumePercent(): Int { val a = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager; val max = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC); return if (max == 0) 0 else a.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / max }
     private fun setVolume(percent: Int) { val a = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager; a.setStreamVolume(AudioManager.STREAM_MUSIC, a.getStreamMaxVolume(AudioManager.STREAM_MUSIC) * percent.coerceIn(0, 100) / 100, 0) }
 
